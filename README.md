@@ -36,6 +36,7 @@ python3 -m asciivid play movie.mp4
 | --- | --- |
 | `asciivid play VIDEO` | Plays the video in this terminal, with sound if it has any. `q` quits, `space` pauses. |
 | `asciivid bake VIDEO -o OUT` | Writes `OUT`, a standalone executable that plays the video. |
+| `asciivid export VIDEO -o out.mp4` | Saves the terminal rendering as an ordinary MP4 to share. `--compare` puts the original above it. Needs Pillow. |
 | `asciivid snapshot VIDEO --at 3.5 -o f.png` | Renders one frame to a PNG, to try settings without playing (needs Pillow). `--compare` puts the real frame above it. |
 | `asciivid info VIDEO` | Shows the size, frame rate and length, and how it fits your terminal. |
 
@@ -98,6 +99,7 @@ asciivid play clip.mp4 --mode blocks                  # pixel-perfect half block
 asciivid play clip.mp4 --mode braille --style ink     # braille dots
 asciivid play clip.mp4 --colors none --mode ramp      # plain text, no colour
 asciivid bake clip.mp4 --fps 24 --tiers 120,200 -o clip-ascii
+asciivid export clip.mp4 --compare -o clip-compare.mp4   # side by side with the original
 ```
 
 ## Terminals

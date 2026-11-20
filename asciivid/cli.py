@@ -4,6 +4,7 @@ standalone executable.
     asciivid play VIDEO [options]
     asciivid bake VIDEO -o OUT [options]
     asciivid snapshot VIDEO --at SECONDS -o frame.png [options]
+    asciivid export VIDEO -o out.mp4 [--compare] [options]
     asciivid info VIDEO
 
 Options can also come from a TOML file: ~/.config/asciivid/config.toml, or the
@@ -28,6 +29,8 @@ import time
 import tomllib
 import zipfile
 from pathlib import Path
+
+import numpy as np
 
 from . import __version__, player
 from .render import (CHARSETS, COLORS, MODES, STYLES, Encoder, Renderer, fit_grid,
@@ -302,9 +305,11 @@ def cmd_bake(args) -> None:
 
 def cmd_snapshot(args) -> None:
     try:
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image
     except ImportError:
         raise SystemExit("asciivid: snapshot needs Pillow (pip install pillow)")
+    from .image import CellPainter
+
     o = resolve(args, OPTIONS)
     info = probe(args.video)
     o["start"] = args.at
@@ -314,61 +319,81 @@ def cmd_snapshot(args) -> None:
     f = next(frames(args.video, r, o["fps"] or info.fps, o, max_frames=1), None)
     if f is None:
         raise SystemExit(f"asciivid: no frame at {args.at}s")
-    cells = r.render(f)
-
-    font_path = args.font or next((p for p in ("/System/Library/Fonts/Menlo.ttc",
-                                               "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf")
-                                   if os.path.exists(p)), None)
-    font = ImageFont.truetype(font_path, 20) if font_path else ImageFont.load_default()
-    cw = round(font.getlength("M"))
-    chh = round(cw * o["cell_aspect"])
-
-    def rgb(v: int):
-        if o["colors"] == "256":
-            from .render import _xterm256_palette
-            p = _xterm256_palette()[v - 16]
-            return tuple(int(x) for x in p)
-        return (v >> 16, (v >> 8) & 255, v & 255)
-
-    img = Image.new("RGB", (cols * cw, rows * chh), (0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    block_mode = o["mode"] in ("blocks", "quad", "braille")
-    for y in range(rows):
-        for x in range(cols):
-            ch = r.chars[cells.ch[y, x]]
-            box = (x * cw, y * chh, (x + 1) * cw - 1, (y + 1) * chh - 1)
-            if o["colors"] != "none":
-                draw.rectangle(box, fill=rgb(int(cells.bg[y, x])))
-            if ch == " ":
-                continue
-            fg = (220, 220, 220) if o["colors"] == "none" else rgb(int(cells.fg[y, x]))
-            if block_mode:
-                # Draw block and braille glyphs from their masks: fonts vary.
-                m = r.mode.masks[cells.ch[y, x]]
-                sw, sh = r.mode.sub_w, r.mode.sub_h
-                for k, on in enumerate(m):
-                    if on:
-                        sx, sy = k % sw, k // sw
-                        x0, y0 = x * cw + sx * cw // sw, y * chh + sy * chh // sh
-                        x1, y1 = x * cw + (sx + 1) * cw // sw - 1, y * chh + (sy + 1) * chh // sh - 1
-                        if o["mode"] == "braille":
-                            cx, cy, rad = (x0 + x1) / 2, (y0 + y1) / 2, min(cw / sw, chh / sh) / 3
-                            draw.ellipse((cx - rad, cy - rad, cx + rad, cy + rad), fill=fg)
-                        else:
-                            draw.rectangle((x0, y0, x1, y1), fill=fg)
-            else:
-                draw.text((x * cw, y * chh + (chh - cw * 1.95) / 2), ch, fill=fg, font=font)
-
+    painter = CellPainter(r, args.cell_px, o["cell_aspect"], o["colors"], args.font)
+    img = painter.paint(r.render(f))
     if args.compare:
-        src = next(read_frames(args.video, img.width, img.height, fps=o["fps"] or info.fps,
-                               start=args.at, max_frames=1), None)
+        h, w = img.shape[:2]
+        src = next(read_frames(args.video, w, h, fps=o["fps"] or info.fps, start=args.at,
+                               max_frames=1), None)
         if src is not None:
-            both = Image.new("RGB", (img.width, img.height * 2 + 8), (40, 40, 40))
-            both.paste(Image.fromarray(src), (0, 0))
-            both.paste(img, (0, img.height + 8))
-            img = both
-    img.save(args.output)
+            img = np.concatenate([src, np.full((8, w, 3), 40, np.uint8), img])
+    Image.fromarray(img).save(args.output)
     print(f"wrote {args.output} ({cols}x{rows} cells)", file=sys.stderr)
+
+
+# --------------------------------------------------------------------------
+# export: the terminal rendering as an ordinary video file
+# --------------------------------------------------------------------------
+
+
+def cmd_export(args) -> None:
+    from .image import CellPainter
+
+    o = resolve(args, OPTIONS)
+    info = probe(args.video)
+    fps = o["fps"] or info.fps
+    if not (o["cols"] or o["rows"]):
+        o["cols"] = 240
+    cols, rows = grid_for(info, o, 0, 0)
+    r = make_renderer(cols, rows, o)
+    painter = CellPainter(r, args.cell_px, o["cell_aspect"], o["colors"], args.font)
+    w, h = cols * painter.cw, rows * painter.ch
+    out_h = h * 2 + 8 if args.compare else h
+    pad_w, pad_h = w % 2, out_h % 2                         # x264 needs even sizes
+
+    cmd = [require("ffmpeg"), "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
+           "-s", f"{w}x{out_h}", "-r", str(fps), "-i", "-"]
+    with_audio = info.has_audio and not args.no_audio
+    if with_audio:
+        if o["start"]:
+            cmd += ["-ss", str(o["start"])]
+        if o["duration"]:
+            cmd += ["-t", str(o["duration"])]
+        cmd += ["-i", args.video, "-map", "0:v", "-map", "1:a", "-c:a", "aac", "-shortest"]
+    if pad_w or pad_h:
+        cmd += ["-vf", f"pad={w + pad_w}:{out_h + pad_h}"]
+    cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", str(args.crf), "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart", args.output]
+    enc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+
+    originals = None
+    if args.compare:
+        originals = read_frames(args.video, w, h, fps=fps, start=o["start"], duration=o["duration"])
+    gap = np.full((8, w, 3), 40, np.uint8)
+    total = int((o["duration"] or info.duration - o["start"]) * fps) if info.duration else 0
+    t = time.monotonic()
+    n = 0
+    try:
+        for n, f in enumerate(frames(args.video, r, fps, o), 1):
+            img = painter.paint(r.render(f))
+            if originals is not None:
+                src = next(originals, None)
+                if src is None:
+                    break
+                img = np.concatenate([src, gap, img])
+            enc.stdin.write(img.tobytes())
+            if n % 15 == 0:
+                pct = f"{100 * n / total:3.0f}%" if total else str(n)
+                print(f"\r  {pct}", end="", file=sys.stderr, flush=True)
+    finally:
+        enc.stdin.close()
+        enc.wait()
+        if originals is not None:
+            originals.close()
+    if enc.returncode:
+        raise SystemExit("asciivid: ffmpeg failed to write the video")
+    print(f"\rwrote {args.output}: {n} frames, {w}x{out_h} px from {cols}x{rows} cells "
+          f"({time.monotonic() - t:.0f}s)", file=sys.stderr)
 
 
 def cmd_info(args) -> None:
@@ -415,9 +440,22 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("-o", "--output", default="snapshot.png")
     s.add_argument("--compare", action="store_true", help="put the original frame above it")
     s.add_argument("--font", help="monospace font file to draw with")
+    s.add_argument("--cell-px", type=int, default=12, help="pixel width of one character [12]")
     s.add_argument("--config", help="TOML file with option defaults")
     add_options(s, OPTIONS)
     s.set_defaults(func=cmd_snapshot)
+
+    e = sub.add_parser("export", help="save the terminal rendering as a video file (MP4)")
+    e.add_argument("video")
+    e.add_argument("-o", "--output", default="asciivid.mp4")
+    e.add_argument("--compare", action="store_true", help="put the original video above it")
+    e.add_argument("--cell-px", type=int, default=8, help="pixel width of one character [8]")
+    e.add_argument("--crf", type=int, default=16, help="x264 quality, lower is better [16]")
+    e.add_argument("--font", help="monospace font file to draw with")
+    e.add_argument("--no-audio", action="store_true", help="leave the sound out")
+    e.add_argument("--config", help="TOML file with option defaults")
+    add_options(e, OPTIONS)
+    e.set_defaults(func=cmd_export)
 
     i = sub.add_parser("info", help="show a video's size, frame rate and length")
     i.add_argument("video")
