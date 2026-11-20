@@ -111,7 +111,8 @@ class Audio:
         self.stop()
         if self.cmd:
             self.proc = subprocess.Popen(self.cmd, stdin=subprocess.DEVNULL,
-                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                         start_new_session=True)
 
     def pause(self, paused: bool):
         if self.proc and self.proc.poll() is None:

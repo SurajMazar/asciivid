@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from fractions import Fraction
 
@@ -106,7 +107,10 @@ def read_frames(path: str, px_w: int, px_h: int, *, fps: float, start: float = 0
     cmd += ["-an", "-vf", ",".join(filters), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
 
     size = px_w * px_h * 3
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=size * 4)
+    # Own session: Ctrl-C in the terminal stops the player, which then ends ffmpeg
+    # quietly, instead of ffmpeg dying mid-write and printing errors.
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            bufsize=size * 4, start_new_session=True)
     try:
         while True:
             buf = proc.stdout.read(size)
@@ -114,10 +118,15 @@ def read_frames(path: str, px_w: int, px_h: int, *, fps: float, start: float = 0
                 break
             yield np.frombuffer(buf, np.uint8).reshape(px_h, px_w, 3)
     finally:
-        if proc.poll() is None:
+        killed = proc.poll() is None
+        if killed:
             proc.kill()
         proc.stdout.close()
+        err = proc.stderr.read().decode("utf-8", "replace").strip()
+        proc.stderr.close()
         proc.wait()
+        if err and not killed:
+            print(f"ffmpeg: {err}", file=sys.stderr)
 
 
 def fit_grid(src_w: int, src_h: int, max_cols: int, max_rows: int,
