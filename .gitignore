@@ -10,3 +10,8 @@ dist/
 *.mkv
 *.webm
 snapshot*.png
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store
