@@ -1,0 +1,12 @@
+__pycache__/
+*.egg-info/
+build/
+.venv/
+
+# Baked players and source videos stay local: they hold the video itself.
+dist/
+*.mp4
+*.mov
+*.mkv
+*.webm
+snapshot*.png

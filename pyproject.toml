@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asciivid"
+version = "0.1.0"
+description = "Play any video in the terminal as characters, or bake it into a standalone executable"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+snapshot = ["pillow>=10"]
+
+[project.scripts]
+asciivid = "asciivid.cli:main"
+
+[tool.setuptools]
+packages = ["asciivid"]

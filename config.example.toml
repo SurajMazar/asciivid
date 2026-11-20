@@ -1,0 +1,24 @@
+# asciivid config. Copy to ~/.config/asciivid/config.toml, or pass --config FILE.
+# Keys are the long option names; command-line flags override them.
+
+fps = 30              # frames per second to render; leave out for the video's own
+mode = "glyph"        # glyph | ramp | blocks | quad | braille
+charset = "ascii"     # ascii | code | symbols | letters | binary | simple | matrix | your own string
+style = "full"        # full: coloured paper behind the characters; ink: characters on black
+paper = 0.5           # full style: 1 = most exact picture, lower = characters stand out more
+colors = "truecolor"  # truecolor | 256 | gray | none
+color_step = 1        # round colours to this step; 4-8 cuts output for slow terminals
+cell_aspect = 2.0     # your font's cell height / width
+
+# Picture adjustments (ffmpeg eq filter)
+brightness = 0.0
+contrast = 1.0
+gamma = 1.0
+saturation = 1.0
+
+# play only
+loop = false
+av_offset = 0.0       # seconds to delay the picture so it lines up with the sound
+
+# bake only: the widths baked in; the player picks the largest that fits
+tiers = [80, 120, 160, 200, 240, 300]
